@@ -6,7 +6,7 @@ uses
   System.Classes, System.SysUtils, System.Threading;
 
 type
-  TOnExcept = reference to procedure(const Text: string);
+  TOnExcept = reference to procedure(E: Exception);
 
   Async = class
   private
@@ -14,7 +14,7 @@ type
       FOnExcept: TOnExcept;
       FPool: TThreadPool;
     class procedure SetOnExcept(const Value: TOnExcept); static;
-    class procedure DoExcept(E: Exception);
+    class procedure DoExcept(E: TObject);
     class procedure Synchronize(Proc: TThreadProcedure);
     class procedure ForceQueue(Proc: TThreadProcedure); overload;
     class function IsMainThread: Boolean;
@@ -69,6 +69,8 @@ type
     class function Run<T>(Proc: TProcObj<T>; Arg1: T; AfterSync: TProc = nil): ITask; overload;
     class function Run<T>(Proc: TProcObjConst<T>; Arg1: T; AfterSync: TProc = nil): ITask; overload;
     class function Run<T, TResult>(Proc: TFunc<T, TResult>; Arg1: T; AfterSync: TProc<TResult> = nil): ITask; overload;
+    // Exceptions
+    class procedure QueueException(E: TObject);
   end;
 
 implementation
@@ -78,10 +80,16 @@ begin
   FOnExcept := Value;
 end;
 
-class procedure Async.DoExcept(E: Exception);
+class procedure Async.DoExcept(E: TObject);
 begin
   if Assigned(FOnExcept) then
-    FOnExcept('Async error: ' + E.Message);
+    FOnExcept(Exception(E))
+  else
+    Queue(
+      procedure
+      begin
+        raise Exception(E);
+      end);
 end;
 
 class function Async.IsMainThread: Boolean;
@@ -133,8 +141,7 @@ begin
         try
           Proc;
         except
-          on E: Exception do
-            DoExcept(E);
+          DoExcept(AcquireExceptionObject);
         end;
       end)
   else
@@ -274,8 +281,7 @@ begin
             Queue(AfterSync);
         end;
       except
-        on E: Exception do
-          DoExcept(E);
+        DoExcept(AcquireExceptionObject);
       end;
     end, FPool);
 end;
@@ -421,6 +427,11 @@ begin
     begin
       Proc(Arg1);
     end);
+end;
+
+class procedure Async.QueueException(E: TObject);
+begin
+  DoExcept(E);
 end;
 
 class procedure Async.Queue<T>(Proc: TProcConst<T>; Arg1: T);
